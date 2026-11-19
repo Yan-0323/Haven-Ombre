@@ -9637,6 +9637,85 @@ async def api_buckets(request):
         return JSONResponse({"error": str(e)}, status_code=500)
 
 
+@mcp.custom_route("/api/bucket-map", methods=["GET"])
+async def api_bucket_map(request):
+    """Structured memory star map for the xinchao dashboard (metadata only, no content)."""
+    from starlette.responses import JSONResponse
+    err = _require_raw_api_auth(request)
+    if err:
+        return err
+    try:
+        all_buckets = await bucket_mgr.list_all(include_archive=False)
+        stats = {"pinned": 0, "dynamic": 0, "archived": 0}
+        stars = []
+        for b in all_buckets:
+            meta = b.get("metadata", {})
+            meta_view = normalize_memory_metadata(b)
+            bucket_type = meta.get("type", "dynamic")
+            if bucket_type == "archive" or meta.get("archived"):
+                stats["archived"] += 1
+                bucket_type = "archived"
+            elif meta.get("pinned"):
+                stats["pinned"] += 1
+            else:
+                stats["dynamic"] += 1
+            stars.append({
+                "id": b["id"],
+                "title": meta.get("name", b["id"]),
+                "name": meta.get("name", b["id"]),
+                "type": bucket_type,
+                "bucketType": "permanent" if bucket_type in ("permanent", "pinned", "archived") or meta.get("pinned") else "dynamic",
+                "pinned": bool(meta.get("pinned", False)),
+                "archived": bucket_type == "archived",
+                "domains": meta.get("domain", []),
+                "domain": meta.get("domain", []),
+                "valence": meta.get("valence"),
+                "arousal": meta.get("arousal"),
+                "importance": meta.get("importance", 5),
+                "score": meta.get("score", decay_engine.calculate_score(meta) if decay_engine else 0),
+                "tags": meta.get("tags", []),
+                "createdAt": meta.get("created", ""),
+                "created_at": meta.get("created", ""),
+                "lastActiveAt": meta.get("last_active", ""),
+                "last_active": meta.get("last_active", ""),
+                "activationCount": meta.get("activation_count", 0),
+                "anchored": bool(meta.get("anchor", False)),
+                "resolved": bool(meta.get("resolved", False)),
+                "metadataView": meta_view,
+            })
+        return JSONResponse({
+            "schemaVersion": 2,
+            "generatedAt": __import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat(),
+            "total": len(stars),
+            "stars": stars,
+            "stats": stats,
+        })
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+@mcp.custom_route("/api/bucket-preview/{bucket_id}", methods=["GET"])
+async def api_bucket_preview(request):
+    """Return a short content preview of a memory bucket for the xinchao dashboard."""
+    from starlette.responses import JSONResponse
+    err = _require_raw_api_auth(request)
+    if err:
+        return err
+    bucket_id = request.path_params["bucket_id"]
+    bucket = await bucket_mgr.get(bucket_id)
+    if not bucket:
+        return JSONResponse({"ok": False, "error": "not_found", "id": bucket_id}, status_code=404)
+    content = strip_wikilinks(bucket.get("content", ""))
+    preview = content[:1400]
+    return JSONResponse({
+        "ok": True,
+        "id": bucket_id,
+        "preview": preview,
+        "truncated": len(content) > 1400,
+        "lineCount": preview.count(chr(10)) + 1,
+    })
+
+
 @mcp.custom_route("/api/buckets/light", methods=["GET"])
 async def api_buckets_light(request):
     """List lightweight bucket metadata without content previews."""
